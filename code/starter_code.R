@@ -364,6 +364,17 @@ data <-
 ################################################################################
 
 
+##################################
+###                            ###
+###      PREDICTION SETUP      ###
+###                            ###
+##################################
+
+
+#############################
+##     train/test sets     ##
+#############################
+
 #split data into training and test sets. let's do an 80/20 split
 set.seed(1413)
 index <- createDataPartition(data$price, times = 1, p = 0.8, list = FALSE)
@@ -371,6 +382,10 @@ index <- createDataPartition(data$price, times = 1, p = 0.8, list = FALSE)
 # assign training and test sets
 train_set <- slice(data, index)
 test_set <- slice(data, -index)
+
+#################################
+##     training parameters     ##
+#################################
 
 # set the trainControl variable for 5-fold cross validation and allow parallel processing
 train_control <- trainControl(method = "cv",
@@ -385,97 +400,129 @@ tune_grid_rf <- expand.grid(
   .min.node.size = c(5, 10)
 )
 
-# create variable sets
+####################################################
+##     variable sets of increasing complexity     ##
+####################################################
+
+# create variable sets FOR LINEAR REGRESSION 
+# (includes functional form adjustments to accommodate linear patterns)
 
 # property stats 
-regression_vars_basic <- c("city", "stars", "rating", "ln_distance", "ln_rating_reviewcount")
+linear_vars_basic <- c("city", "stars", "rating", "ln_distance", "ln_rating_reviewcount")
 
 # property stats + circumstances (offer, holiday) + neighbor_city & interaction
-regression_vars_mid <- c("offer",  "holiday", "city", "stars", "rating", "ln_distance", "ln_rating_reviewcount", "is_neighbour_city", "city*is_neighbour_city")
+linear_vars_mid <- c("offer",  "holiday", "city", "stars", "rating", "ln_distance", "ln_rating_reviewcount", "is_neighbour_city", "city*is_neighbour_city")
  
 # all potential variables
-regression_vars_all <- c("offer", "offer_cat", "holiday", 
+linear_vars_all <- c("offer", "offer_cat", "holiday", 
                            "nnights", "scarce_room", "city", 
                            "stars", "rating", "city_actual", 
                            "neighbourhood", "ln_distance", "ln_distance_alter",
                            "ln_rating_reviewcount", "ln2_ratingta_count", "is_neighbour_city",
                          "city*is_neighbour_city")
 
+# create variable sets FOR NON-LINEAR METHODS
+# (no functional form adjustments, because these models can find non-linear patterns)
+
 # property stats
-tree_vars_basic <- c("city", "stars", "rating", "distance", "rating_reviewcount")
+nonlinear_vars_basic <- c("city", "stars", "rating", "distance", "rating_reviewcount")
 
 # property stats + circumstances + neighbor_city
-tree_vars_mid <- c("offer",  "holiday", "city", "stars", "rating", "distance", "rating_reviewcount", "is_neighbour_city")
+nonlinear_vars_mid <- c("offer",  "holiday", "city", "stars", "rating", "distance", "rating_reviewcount", "is_neighbour_city")
 
 # all potential variables
-tree_vars_all <- c("offer", "offer_cat", "holiday", 
+nonlinear_vars_all <- c("offer", "offer_cat", "holiday", 
                    "nnights", "scarce_room", "city", 
                    "stars", "rating", "city_actual", 
                    "neighbourhood", "distance", "distance_alter",
                    "rating_reviewcount", "ratingta_count", "is_neighbour_city")
 
-lm_1 <- train(formula(paste0("price ~", paste0(regression_vars_basic, collapse = "+"))),
+##################################
+###                            ###
+###        CREATE MODELS       ###
+###                            ###
+##################################
+
+#############################
+##           ols           ##
+#############################
+
+# basic
+lm_1 <- train(formula(paste0("price ~", paste0(linear_vars_basic, collapse = "+"))),
               method = "lm",
               data = train_set,
               trControl = train_control)
 
-lm_2 <- train(formula(paste0("price ~", paste0(regression_vars_mid, collapse = "+"))),
+# mid
+lm_2 <- train(formula(paste0("price ~", paste0(linear_vars_mid, collapse = "+"))),
               method = "lm",
               data = train_set,
               trControl = train_control)
 
-lm_3 <- train(formula(paste0("price ~", paste0(regression_vars_all, collapse = "+"))),
+# complex
+lm_3 <- train(formula(paste0("price ~", paste0(linear_vars_all, collapse = "+"))),
               method = "lm",
               data = train_set,
               trControl = train_control)
 
+#############################
+##   rpart decision tree   ##
+#############################
+
+# basic
 set.seed(1413)
-tree_1 <- train(formula(paste0("price ~", paste0(tree_vars_basic, collapse = "+"))),
+tree_1 <- train(formula(paste0("price ~", paste0(nonlinear_vars_basic, collapse = "+"))),
                 method = "rpart",
                 data = train_set,
                 trControl = train_control,
                 tuneLength = 10)
 
+# mid
 set.seed(1413)
-tree_2 <- train(formula(paste0("price ~", paste0(tree_vars_mid, collapse = "+"))),
+tree_2 <- train(formula(paste0("price ~", paste0(nonlinear_vars_mid, collapse = "+"))),
                 method = "rpart",
                 data = train_set,
                 trControl = train_control,
                 tuneLength = 10)
 
+# complex
 set.seed(1413)
-tree_3 <- train(formula(paste0("price ~", paste0(tree_vars_all, collapse = "+"))),
+tree_3 <- train(formula(paste0("price ~", paste0(nonlinear_vars_all, collapse = "+"))),
                 method = "rpart",
                 data = train_set,
                 trControl = train_control,
                 tuneLength = 10)
 
+#############################
+##      random forest      ##
+#############################
+
+# basic
 set.seed(1413)
-rf_1 <- train(formula(paste0("price ~", paste0(tree_vars_basic, collapse = "+"))),
+rf_1 <- train(formula(paste0("price ~", paste0(nonlinear_vars_basic, collapse = "+"))),
                 method = "ranger",
                 data = train_set,
                 trControl = train_control,
                 tuneGrid = tune_grid_rf)
 
+# mid
 set.seed(1413)
-rf_2 <- train(formula(paste0("price ~", paste0(tree_vars_mid, collapse = "+"))),
+rf_2 <- train(formula(paste0("price ~", paste0(nonlinear_vars_mid, collapse = "+"))),
               method = "ranger",
               data = train_set,
               trControl = train_control,
               tuneGrid = tune_grid_rf)
 
+# complex
 set.seed(1413)
-rf_3 <- train(formula(paste0("price ~", paste0(tree_vars_all, collapse = "+"))),
+rf_3 <- train(formula(paste0("price ~", paste0(nonlinear_vars_all, collapse = "+"))),
               method = "ranger",
               data = train_set,
               trControl = train_control,
               tuneGrid = tune_grid_rf)
 
-## Prediction
 
-### regression
-### cart
-### random forest
+
 ### boosting?
 
 ## Analysis
