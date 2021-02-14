@@ -1,3 +1,3 @@
-The aim of this project is to predict prices for hotels in Europe. It uses the hotels-europe data prepared by Gábor Békés and Gabor Kezdi, available [here](https://osf.io/r6uqb/). The data has features about the ratings, price, location, promotional offers, and room scarcity of the hotels. This project will focus on predicting price for a single weekend in April 2018 in the following cities: Berlin, Munich, Vienna, Budapest, Prague, Warsaw. It will only look at hotels which cost less than 500 EUR per night.  
+The aim of this project is to predict prices for hotels in Europe. It uses the hotels-europe data prepared by Gábor Békés and Gabor Kezdi, available [here](https://osf.io/r6uqb/).  
   
-To see the report, check the **docs** folder.
+To see the HTML report, check the **docs** folder.
