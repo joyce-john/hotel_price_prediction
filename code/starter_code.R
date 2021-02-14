@@ -43,6 +43,8 @@ library(tidyverse)
 library(Hmisc)
 library(GGally)
 library(caret)
+library(rpart)
+library(ranger)
 
 
 #load helper functions - used for price_diff_by_variables
@@ -340,17 +342,17 @@ rm(temp)
 # make the variable transformations that EDA suggested would be useful for regression
 data <- 
   data %>% 
-  mutate(ln_distance = log(distance),
-         ln_distance_alter = log(distance_alter),
-         ln_rating_reviewcount = log(rating_reviewcount),
-         ln2_ratingta_count = log(ratingta_count)^2)
+  mutate(ln_distance = log(distance + 0.001),
+         ln_distance_alter = log(distance_alter + 0.001),
+         ln_rating_reviewcount = log(rating_reviewcount + 0.001),
+         ln2_ratingta_count = log(ratingta_count + 0.001)^2)
 
 
 # based on the EDA, create a new binary variable which indicates whether
 # the hotel is in the city in the "city" column or whether it's in a smaller city nearby
 data <-
   data %>% 
-  mutate(is_neighbor_city = ifelse(as.character(city) != as.character(city_actual), 1, 0))
+  mutate(is_neighbour_city = ifelse(as.character(city) != as.character(city_actual), 1, 0))
 
 
 ################################################################################
@@ -370,8 +372,104 @@ index <- createDataPartition(data$price, times = 1, p = 0.8, list = FALSE)
 train_set <- slice(data, index)
 test_set <- slice(data, -index)
 
-# 
+# set the trainControl variable for 5-fold cross validation and allow parallel processing
+train_control <- trainControl(method = "cv",
+                              number = 5,
+                              allowParallel = TRUE)
 
+# set the tuneGrid params for random forest
+# setting mtry as the sqrt of the number of basic vars through sqrt of the number of all vars
+tune_grid_rf <- expand.grid(
+  .mtry = c(2, 3, 4),
+  .splitrule = "variance", # for regression
+  .min.node.size = c(5, 10)
+)
+
+# create variable sets
+
+# property stats 
+regression_vars_basic <- c("city", "stars", "rating", "ln_distance", "ln_rating_reviewcount")
+
+# property stats + circumstances (offer, holiday) + neighbor_city & interaction
+regression_vars_mid <- c("offer",  "holiday", "city", "stars", "rating", "ln_distance", "ln_rating_reviewcount", "is_neighbour_city", "city*is_neighbour_city")
+ 
+# all potential variables
+regression_vars_all <- c("offer", "offer_cat", "holiday", 
+                           "nnights", "scarce_room", "city", 
+                           "stars", "rating", "city_actual", 
+                           "neighbourhood", "ln_distance", "ln_distance_alter",
+                           "ln_rating_reviewcount", "ln2_ratingta_count", "is_neighbour_city",
+                         "city*is_neighbour_city")
+
+# property stats
+tree_vars_basic <- c("city", "stars", "rating", "distance", "rating_reviewcount")
+
+# property stats + circumstances + neighbor_city
+tree_vars_mid <- c("offer",  "holiday", "city", "stars", "rating", "distance", "rating_reviewcount", "is_neighbour_city")
+
+# all potential variables
+tree_vars_all <- c("offer", "offer_cat", "holiday", 
+                   "nnights", "scarce_room", "city", 
+                   "stars", "rating", "city_actual", 
+                   "neighbourhood", "distance", "distance_alter",
+                   "rating_reviewcount", "ratingta_count", "is_neighbour_city")
+
+lm_1 <- train(formula(paste0("price ~", paste0(regression_vars_basic, collapse = "+"))),
+              method = "lm",
+              data = train_set,
+              trControl = train_control)
+
+lm_2 <- train(formula(paste0("price ~", paste0(regression_vars_mid, collapse = "+"))),
+              method = "lm",
+              data = train_set,
+              trControl = train_control)
+
+lm_3 <- train(formula(paste0("price ~", paste0(regression_vars_all, collapse = "+"))),
+              method = "lm",
+              data = train_set,
+              trControl = train_control)
+
+set.seed(1413)
+tree_1 <- train(formula(paste0("price ~", paste0(tree_vars_basic, collapse = "+"))),
+                method = "rpart",
+                data = train_set,
+                trControl = train_control,
+                tuneLength = 10)
+
+set.seed(1413)
+tree_2 <- train(formula(paste0("price ~", paste0(tree_vars_mid, collapse = "+"))),
+                method = "rpart",
+                data = train_set,
+                trControl = train_control,
+                tuneLength = 10)
+
+set.seed(1413)
+tree_3 <- train(formula(paste0("price ~", paste0(tree_vars_all, collapse = "+"))),
+                method = "rpart",
+                data = train_set,
+                trControl = train_control,
+                tuneLength = 10)
+
+set.seed(1413)
+rf_1 <- train(formula(paste0("price ~", paste0(tree_vars_basic, collapse = "+"))),
+                method = "ranger",
+                data = train_set,
+                trControl = train_control,
+                tuneGrid = tune_grid_rf)
+
+set.seed(1413)
+rf_2 <- train(formula(paste0("price ~", paste0(tree_vars_mid, collapse = "+"))),
+              method = "ranger",
+              data = train_set,
+              trControl = train_control,
+              tuneGrid = tune_grid_rf)
+
+set.seed(1413)
+rf_3 <- train(formula(paste0("price ~", paste0(tree_vars_all, collapse = "+"))),
+              method = "ranger",
+              data = train_set,
+              trControl = train_control,
+              tuneGrid = tune_grid_rf)
 
 ## Prediction
 
