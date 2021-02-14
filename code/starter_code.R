@@ -44,6 +44,7 @@ library(Hmisc)
 library(GGally)
 library(caret)
 library(rpart)
+library(rattle)
 library(ranger)
 
 
@@ -79,6 +80,11 @@ data <-
 data <-
   data %>% 
   filter(accommodation_type == 'Hotel')
+
+# let's focus on non-luxury hotels and just drop everything over 500+
+data <-
+  data %>% 
+  filter(price <= 500)
 
 ######################
 ##  factors/levels  ##
@@ -119,13 +125,8 @@ data <-
 data %>% 
   ggplot(aes(x = price)) + 
   geom_histogram()
-# based on the distribution, log is worth considering...
+# based on the distribution, log is worth considering... 
 # ...but may not be necessary after dropping obs with price > 500
-
-# let's focus on non-luxury hotels and just drop everything over 500+
-data <-
-  data %>% 
-  filter(price <= 500)
 
 # choose variables for which its pratical to check correlation (i.e. not factors with a bajillion levels)
 check_cor <- c("price", "offer", "offer_cat", "nnights", "scarce_room", 
@@ -405,7 +406,8 @@ tune_grid_rf <- expand.grid(
 ####################################################
 
 # create variable sets FOR LINEAR REGRESSION 
-# (includes functional form adjustments to accommodate linear patterns)
+# includes functional form adjustments to accommodate linear patterns
+# includes the is_neighbour_city*city interaction
 
 # property stats 
 linear_vars_basic <- c("city", "stars", "rating", "ln_distance", "ln_rating_reviewcount")
@@ -414,7 +416,7 @@ linear_vars_basic <- c("city", "stars", "rating", "ln_distance", "ln_rating_revi
 linear_vars_mid <- c("offer",  "holiday", "city", "stars", "rating", "ln_distance", "ln_rating_reviewcount", "is_neighbour_city", "city*is_neighbour_city")
  
 # all potential variables
-linear_vars_all <- c("offer", "offer_cat", "holiday", 
+linear_vars_all <- c("offer","offer_cat", "holiday", 
                            "nnights", "scarce_room", "city", 
                            "stars", "rating", "city_actual", 
                            "neighbourhood", "ln_distance", "ln_distance_alter",
@@ -422,7 +424,8 @@ linear_vars_all <- c("offer", "offer_cat", "holiday",
                          "city*is_neighbour_city")
 
 # create variable sets FOR NON-LINEAR METHODS
-# (no functional form adjustments, because these models can find non-linear patterns)
+# no functional form adjustments, because these models can find non-linear patterns
+# does not includ the interaction term, because these models can find interactions automatically
 
 # property stats
 nonlinear_vars_basic <- c("city", "stars", "rating", "distance", "rating_reviewcount")
@@ -475,7 +478,7 @@ tree_1 <- train(formula(paste0("price ~", paste0(nonlinear_vars_basic, collapse 
                 method = "rpart",
                 data = train_set,
                 trControl = train_control,
-                tuneLength = 10)
+                tuneLength = 20)
 
 # mid
 set.seed(1413)
@@ -483,7 +486,7 @@ tree_2 <- train(formula(paste0("price ~", paste0(nonlinear_vars_mid, collapse = 
                 method = "rpart",
                 data = train_set,
                 trControl = train_control,
-                tuneLength = 10)
+                tuneLength = 20)
 
 # complex
 set.seed(1413)
@@ -491,7 +494,7 @@ tree_3 <- train(formula(paste0("price ~", paste0(nonlinear_vars_all, collapse = 
                 method = "rpart",
                 data = train_set,
                 trControl = train_control,
-                tuneLength = 10)
+                tuneLength = 20)
 
 #############################
 ##      random forest      ##
@@ -502,6 +505,7 @@ set.seed(1413)
 rf_1 <- train(formula(paste0("price ~", paste0(nonlinear_vars_basic, collapse = "+"))),
                 method = "ranger",
                 data = train_set,
+                importance = "impurity",
                 trControl = train_control,
                 tuneGrid = tune_grid_rf)
 
@@ -510,6 +514,7 @@ set.seed(1413)
 rf_2 <- train(formula(paste0("price ~", paste0(nonlinear_vars_mid, collapse = "+"))),
               method = "ranger",
               data = train_set,
+              importance = "impurity",
               trControl = train_control,
               tuneGrid = tune_grid_rf)
 
@@ -518,16 +523,93 @@ set.seed(1413)
 rf_3 <- train(formula(paste0("price ~", paste0(nonlinear_vars_all, collapse = "+"))),
               method = "ranger",
               data = train_set,
+              importance = "impurity",
               trControl = train_control,
               tuneGrid = tune_grid_rf)
 
+##################################
+###                            ###
+###      EVALUATE MODELS       ###
+###                            ###
+##################################
+
+########################################
+##      cross-validation results      ##
+########################################
+
+# vector of model names
+models <- c('lm_1', 'lm_2', 'lm_3', 'tree_1', 'tree_2', 'tree_3', 'rf_1', 'rf_2', 'rf_3')
+
+# vector of variable descriptors, manually ordered to match
+variable_detail <- c('basic', 'mid', 'complex','basic', 'mid', 'complex','basic', 'mid', 'complex')
+
+# dataframe of RMSE / minimum mean cross-validated RMSE for optimal tuning values for all the models
+cv_results <- data.frame("Model" = models, "Variables" = variable_detail, "Mean_RMSE" = c(lm_1$results$RMSE, lm_2$results$RMSE, lm_3$results$RMSE,
+                                                                                          min(tree_1$results$RMSE), min(tree_2$results$RMSE), min(tree_3$results$RMSE),
+                                                                                          min(rf_1$results$RMSE), min(rf_2$results$RMSE), min(rf_3$results$RMSE)))
+
+# rf_2 has the lowest RMSE in cross-validation, therefore I select it as my model
 
 
-### boosting?
+########################################
+##          test-set results          ##
+########################################
 
-## Analysis
+#use rf_2 model to create a vector of predictions on test set obs
+rf_2_predictions <- predict(rf_2, test_set)
 
-### biggest residuals
-### slice-n-dice data to find subcategories where prediction is doing well, doing poorly
+# calculate RMSE for predictions on test set
+test_set_rmse <- RMSE(rf_2_predictions, test_set$price) # 48.08499
+test_set_mae <- caret::MAE(rf_2_predictions, test_set$price) # 32.63675
+
+# add prediction and RMSE column to test set data so we can analyze errors
+test_set <- 
+  test_set %>% 
+  mutate(prediction = rf_2_predictions)
+
+# do errors differ by city? look at the numbers
+test_set %>% 
+  group_by(city) %>% 
+  summarize(rmse = RMSE(price, prediction))
+
+# do errors differ by city? look at the graph
+test_set %>% 
+  group_by(city) %>% 
+  summarize(rmse = RMSE(price, prediction)) %>% 
+  ggplot(aes(x = reorder(city, rmse), y = rmse)) +
+  geom_bar(stat = 'identity') +
+  theme_few() +
+  labs(x = 'City', y = "RMSE", title = "RMSE on the Test Set") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# top ten positive prediction errors as a table
+test_set %>% 
+  mutate(error = prediction - price) %>% 
+  arrange(desc(error)) %>% 
+  select(hotel_id, city, distance, stars, rating, rating_reviewcount,price, prediction, error) %>% 
+  slice_head(n = 10)
+# 8/10 are in Prague!!
+
+# top 10 negative prediction errors as a table
+test_set %>% 
+  mutate(error = prediction - price) %>% 
+  arrange(error) %>% 
+  select(hotel_id, city, distance, stars, rating, rating_reviewcount,price, prediction, error) %>% 
+  slice_head(n = 10)
+# no real pattern here, but the two biggest errors are in Budapest
 
 
+# look at the most important variables (varImp plot)
+plot(varImp(rf_2))
+
+# partial dependency plot for stars on price
+pdp_stars <- pdp::partial(rf_2, pred.var = "stars", pred.grid = distinct_(test_set, "stars"), train = train_set)
+pdp_stars_plot <- pdp_stars %>%
+  autoplot( ) +
+  geom_point(size=2) +
+  geom_line(size=1) +
+  ylab("Predicted price") +
+  xlab("Stars") +
+  scale_x_continuous(limit=c(1,5), breaks=seq(1,5,0.5)) +
+  theme_few()
+pdp_stars_plot
