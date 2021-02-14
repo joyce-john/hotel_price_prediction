@@ -1,1 +1,1 @@
-# hotel_price_prediction
+This project aims to predict price for European hotels in Select cities. 

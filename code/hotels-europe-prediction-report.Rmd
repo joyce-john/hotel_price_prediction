@@ -1,3 +1,32 @@
+---
+title: "Price Prediction for the Hotels Europe Data"
+author: "John Joyce"
+date: "2/14/2021"
+output:
+  html_document:
+    theme: "paper"
+    code_download: yes
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+options(digits = 3)
+```
+# Overview
+The aim of this project is to predict prices for hotels in Europe. It uses the *hotels-europe* data available [here](https://osf.io/r6uqb/). The data has features about the ratings, price, location, promotional offers, and room scarcity of the hotels. This project will focus on predicting price for a single **weekend in April 2018** in the following cities: Berlin, Munich, Vienna, Budapest, Prague, Warsaw. It will only look at hotels which cost less than 500 EUR per night. After filtering to match these criteria, the data has about 1200 observations. The mean nightly price in the sample is 138 EUR.  
+
+
+# Basic Data Prep
+
+These are the basic data preparation steps:  
+
+1. load and join *price* and *features* tables on **hotel_id**  
+2. filter the data to match the desired cities, time period, and property type (only hotels) 
+3. filter the data to exclude nightly prices above 500 EUR  
+4. drop NAs - there are only 54  
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
 ################################################################################
 ################################################################################
 ###############                                                  ###############
@@ -28,6 +57,7 @@ library(rpart)
 library(rattle)
 library(ranger)
 library(ggthemes)
+library(kableExtra)
 
 
 #load helper functions - used for price_diff_by_variables
@@ -82,7 +112,12 @@ data <-
   data %>% 
   mutate(offer_cat = factor(offer_cat, levels = c("0% no offer", "1-15% offer", "15-50% offer", "50%-75% offer", "75%+ offer")))
 
+```
+# Exploratory Data Analysis  
 
+A quick check on the correlation among the variables show that ratings and the number of reviews are correlated with price:  
+
+```{r, include = FALSE, warning=FALSE, message=FALSE, echo=FALSE}
 ##################################
 ###         EXPLORATORY        ###
 ###            DATA            ###
@@ -112,12 +147,13 @@ data %>%
 # based on the distribution, log is worth considering... 
 # ...but may not be necessary after dropping obs with price > 500
 
-# choose variables for which its pratical to check correlation (i.e. not factors with a bajillion levels)
-check_cor <- c("price", "offer", "offer_cat", "nnights", "scarce_room", 
+# choose variables for which its practical to check correlation (i.e. not factors with a bajillion levels)
+check_cor <- c("price", "offer", "offer_cat", "scarce_room",              #REMOVED nnights FOR MARKDOWN
                "city", "distance", "stars", "rating", "rating_reviewcount", 
                "ratingta", "ratingta_count", "distance_alter")
 
 # check correlations with price (and also between these variables)
+plot_cor <-                                                               #ASSIGNED OBJECT FOR MARKDOWN
 data %>% 
   select(all_of(check_cor)) %>% 
   ggcorr()
@@ -147,6 +183,7 @@ data %>%
   geom_smooth(color = 'red')
 
 # log distance and level price
+distance2 <- 
 data %>% 
   ggplot(aes(x = log(distance), y = price)) +
   geom_point(alpha = 0.5) +
@@ -195,10 +232,13 @@ data %>%
   geom_smooth(color = 'red')
 
 # log rating_reviewcount and level price
+plot_log_rating_reviewcount <-                                          #ASSIGNED OBJECT FOR MARKDOWN
 data %>% 
   ggplot(aes(x = log(rating_reviewcount), y = price)) +
   geom_point(alpha = 0.5) +
-  geom_smooth(color = 'red')
+  geom_smooth(color = 'red') +
+  theme_few() +
+  labs(x = "ln(rating_reviewcount)", y = "Price")
 # outstanding - it looks *really* linear now!
 
 # log rating_reviewcount and log price
@@ -260,9 +300,12 @@ data %>%
 ####################
 
 # check boxplots for cities
+plot_city <-                                                            #ASSIGNED OBJECT FOR MARKDOWN
 data %>% 
   ggplot(aes(x = city, y = price)) +
-  geom_boxplot()
+  geom_boxplot() +
+  theme_few() +                                                     
+  labs(x = "City", y = "Price")
 
 #######################
 ##     offer_cat     ##
@@ -284,9 +327,12 @@ price_diff_by_variables(data, "city", "offer_cat")
 ###################
 
 # check boxplots for stars
+plot_stars <-                                                           #ASSIGNED OBJECT FOR MARKDOWN
 data %>% 
   ggplot(aes(x = as.factor(stars), y = price)) +
-  geom_boxplot()
+  geom_boxplot() +
+  theme_few() +
+  labs(x = "Stars", y = "Price")
 
 # worth an interaction?
 price_diff_by_variables(data, "city", "stars")
@@ -308,6 +354,8 @@ data %>%
 temp <-
   data %>% 
   mutate(is_neighbor_city = ifelse(as.character(city) != as.character(city_actual), 1, 0))
+
+plot_neighbour_cities <-                                                   #ASSIGNED OBJECT FOR MARKDOWN
 price_diff_by_variables(temp, "city", "is_neighbor_city")
 # with the exception of Berlin, neighboring cities are usually cheaper
 # this could be worth an interaction in the regression
@@ -315,6 +363,47 @@ price_diff_by_variables(temp, "city", "is_neighbor_city")
 # remove temporary dataframe
 rm(temp)
 
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+plot_cor
+```  
+  
+Some of the variables have very skewed distributions, but they can be worked into a normal shape with a log transformation. One example is this **review count** variable. This can help accommodate a linear pattern between the variable and the target (price), which is helpful for linear regression.  
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+plot_log_rating_reviewcount
+```  
+
+The mean prices vary from city to city, but not as much as one might expect:  
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+plot_city
+```  
+
+It is apparent that the **stars** rating for a hotel is going to play an important role in predicting price:  
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+plot_stars
+```  
+
+One more thing to consider is whether these hotels are actually located in the cities they are grouped with. For example, some hotels in the Berlin market are actually located in nearby Schoenefeld, not in the city of Berlin itself. With one notable exception, it seems that hotels located in neighbouring cities ("1" on this graph) are cheaper on average.  
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+plot_neighbour_cities
+```  
+
+# Functional Form / Feature Engineering  
+
+Log transformations are taken for the following variables for use in the linear regression models:  
+* distance  
+* distance_alter  
+* ratings_reviewcount  
+* ratingta_count  
+  
+One new feature is engineered: a binary variable which indicates whether a hotel is **actually in a neighbouring city** instead of the city given as its market. 
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
 
 ##################################
 ###                            ###
@@ -338,7 +427,27 @@ data <-
   data %>% 
   mutate(is_neighbour_city = ifelse(as.character(city) != as.character(city_actual), 1, 0))
 
+```  
 
+# Prediction  
+
+The data is split into training and test sets, with 80% of the data available for training and 20% reserved for evaluation.  
+
+Three different model methods are used:  
+* OLS linear regression  
+* rpart decision tree  
+* random forest  
+
+Every model is fit on three sets of predictors, with increasing complexity:  
+* **basic**: city, stars, rating, distance from the city center, review count (non-Tripadvisor)  
+* **mid**: everything in basic + holidays, promotional offers, if it's a neighbouring city, and a variable interaction for OLS  
+* **all**: everything in mid + any other potentially useful variable remaining (precise neighbourhood, room scarcity, another series of ratings and reviews from Tripadvisor)  
+
+The OLS models use slightly different predictors than the tree models. OLS models use some log-transformed variables, as well as an interaction term for **city** and **is_neighbour_city** in the **mid** and **all** formulas. The tree models use untransformed variables and do not receive the interaction term, because they can uncover non-linear patterns and find interactions independently. Except for these differences, the **basic**, **mid**, and **all** formulas for OLS and tree models are the same.  
+
+Tuning parameters for rpart and random forest are chosen via five-fold cross-validation.  
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
 ################################################################################
 ################################################################################
 ###############                                                  ###############
@@ -444,7 +553,7 @@ lm_2 <- train(formula(paste0("price ~", paste0(linear_vars_mid, collapse = "+"))
               data = train_set,
               trControl = train_control)
 
-# complex
+# all
 lm_3 <- train(formula(paste0("price ~", paste0(linear_vars_all, collapse = "+"))),
               method = "lm",
               data = train_set,
@@ -470,7 +579,7 @@ tree_2 <- train(formula(paste0("price ~", paste0(nonlinear_vars_mid, collapse = 
                 trControl = train_control,
                 tuneLength = 20)
 
-# complex
+# all
 set.seed(1413)
 tree_3 <- train(formula(paste0("price ~", paste0(nonlinear_vars_all, collapse = "+"))),
                 method = "rpart",
@@ -500,7 +609,7 @@ rf_2 <- train(formula(paste0("price ~", paste0(nonlinear_vars_mid, collapse = "+
               trControl = train_control,
               tuneGrid = tune_grid_rf)
 
-# complex
+# all
 set.seed(1413)
 rf_3 <- train(formula(paste0("price ~", paste0(nonlinear_vars_all, collapse = "+"))),
               method = "ranger",
@@ -508,6 +617,19 @@ rf_3 <- train(formula(paste0("price ~", paste0(nonlinear_vars_all, collapse = "+
               importance = "impurity",
               trControl = train_control,
               tuneGrid = tune_grid_rf)
+```  
+
+# Model Evaluation
+
+## Performance in Cross-validation  
+
+The table below shows the mean RMSE across all five folds in cross-validation during model training. Surprisingly, the differences between the different models are fairly small. The performance of the rpart models is suspiciously homogeneous. However, manually tinkering with the tuning parameters only increased the variation among these models by making some of them worse.  
+  
+The OLS models benefited from increasing complexity, but the most complex random forest suffered from the worst RMSE out of all nine models. One possible explanation: including review and rating information from multiple sources (only available in the **all** model) may have been a mistake: these features are highly correlated with one another, and this may have led to excessively correlated trees in the random forest.  
+
+**The selected model is random forest model 2**, because it has the lowest RMSE in cross-validation.  
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
 
 ##################################
 ###                            ###
@@ -520,10 +642,10 @@ rf_3 <- train(formula(paste0("price ~", paste0(nonlinear_vars_all, collapse = "+
 ########################################
 
 # vector of model names
-models <- c('lm_1', 'lm_2', 'lm_3', 'tree_1', 'tree_2', 'tree_3', 'rf_1', 'rf_2', 'rf_3')
+models <- c('OLS 1', 'OLS 2', 'OLS 3', 'Rpart 1', 'Rpart 2', 'Rpart 3', 'Random forest 1', 'Random forest 2', ' Random forest 3')
 
 # vector of variable descriptors, manually ordered to match
-variable_detail <- c('basic', 'mid', 'complex','basic', 'mid', 'complex','basic', 'mid', 'complex')
+variable_detail <- c('basic', 'mid', 'all','basic', 'mid', 'all','basic', 'mid', 'all')
 
 # dataframe of RMSE / minimum mean cross-validated RMSE for optimal tuning values for all the models
 cv_results <- data.frame("Model" = models, "Variables" = variable_detail, "Mean_RMSE" = c(lm_1$results$RMSE, lm_2$results$RMSE, lm_3$results$RMSE,
@@ -532,7 +654,15 @@ cv_results <- data.frame("Model" = models, "Variables" = variable_detail, "Mean_
 
 # rf_2 has the lowest RMSE in cross-validation, therefore I select it as my model
 
+cv_results %>% kable() %>% kable_styling()
 
+```  
+
+## Performance on the Test Set  
+
+The best model performs even better on the test set. The **RMSE is 48.1** (vs 51.2 in cross-validation) and the **mean absolute error** is 32.6.  
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
 ########################################
 ##          test-set results          ##
 ########################################
@@ -543,7 +673,13 @@ rf_2_predictions <- predict(rf_2, test_set)
 # calculate RMSE for predictions on test set
 test_set_rmse <- RMSE(rf_2_predictions, test_set$price) # 48.08499
 test_set_mae <- caret::MAE(rf_2_predictions, test_set$price) # 32.63675
+```  
 
+## Residuals and Diagnostics
+
+The model has some weaknesses. It does not perform equally well in all of the cities in the sample. In fact, it performs particularly poorly in Budapest.  
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
 ########################################
 ##         model diagnostics          ##
 ########################################
@@ -553,10 +689,10 @@ test_set <-
   test_set %>% 
   mutate(prediction = rf_2_predictions)
 
-# do errors differ by city? look at the numbers
-test_set %>% 
-  group_by(city) %>% 
-  summarize(rmse = RMSE(price, prediction))
+# do errors differ by city? look at the numbers                               ### NOT RUN FOR MARKDOWN
+# test_set %>% 
+#   group_by(city) %>% 
+#   summarize(rmse = RMSE(price, prediction))
 
 # do errors differ by city? look at the graph
 test_set %>% 
@@ -567,26 +703,43 @@ test_set %>%
   theme_few() +
   labs(x = 'City', y = "RMSE", title = "RMSE on the Test Set") +
   theme(plot.title = element_text(hjust = 0.5))
-
-# top ten positive prediction errors as a table
-test_set %>% 
-  mutate(error = prediction - price) %>% 
-  arrange(desc(error)) %>% 
-  select(hotel_id, city, distance, stars, rating, rating_reviewcount,price, prediction, error) %>% 
-  slice_head(n = 10)
-# 8/10 are in Prague!!
-
+```  
+  
+Below are the top ten *negative* prediction errors, where the model predicted a price which is too low. There is no general pattern visible here, except that the prices are all significantly above the mean of 138 EUR. The top two errors are in Budapest, contributing to the poor RMSE for that group.   
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
 # top 10 negative prediction errors as a table
 test_set %>% 
   mutate(error = prediction - price) %>% 
   arrange(error) %>% 
   select(hotel_id, city, distance, stars, rating, rating_reviewcount,price, prediction, error) %>% 
-  slice_head(n = 10)
+  slice_head(n = 10) %>% 
+  kable() %>% 
+  kable_styling()
 # no real pattern here, but the two biggest errors are in Budapest, which has the highest RMSE in general
+```  
+  
+Below are the top ten *positive* prediction errors, where the model predicted a price which is too high. The pattern here is perfectly clear: the model is struggling with hotels in Prague.  
 
-
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# top ten positive prediction errors as a table
+test_set %>% 
+  mutate(error = prediction - price) %>% 
+  arrange(desc(error)) %>% 
+  select(hotel_id, city, distance, stars, rating, rating_reviewcount,price, prediction, error) %>% 
+  slice_head(n = 10) %>% 
+  kable() %>% 
+  kable_styling()
+# 8/10 are in Prague!!
+```  
+  
+The variable importance plot shows that **stars** is the most important variable by a considerable margin.  
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
 # look at the most important variables (varImp plot)
 plot(varImp(rf_2))
+```  
+  
+The partial dependence plot for the **stars** variable in the model shows that the expected value for price is quite higher when the number of stars is high.  
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
 
 # partial dependence plot for stars on price
 # calculate partial dependence
@@ -607,3 +760,10 @@ pdp_stars_plot <- pdp_stars %>%
 # show partial dependence plot
 pdp_stars_plot
 
+```  
+  
+# Conclusion
+
+The best model achieves an **RMSE of 51.2 in cross-validation** and **48.1 on the test set**. This is a stable and decent performance. With an **MAE of 32.6 on the test set**, one can expect to predict hotel prices on this population with an average error of 32.6 EUR, using only basic and public information. The biggest weakness of this model is its poor performance in Budapest and Prague. If predictions in these two cities could be improved, the model would have considerably better performance metrics overall.  
+  
+Thinking external validity: this particular iteration of the model would likely not be useful today due to the different circumstances in hotel pricing due to COVID. However, it might be worth re-fitting with the same formula in a post-pandemic world.
